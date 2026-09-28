@@ -7,11 +7,44 @@ import {
   Download, 
   Building2, 
   Map as MapIcon, 
-  ListFilter 
+  ListFilter,
+  RotateCcw
 } from "lucide-react";
 
+// Sri Lanka Province & District Data
+const locationData: Record<string, string[]> = {
+  "Western": ["Colombo", "Gampaha", "Kalutara"],
+  "Central": ["Kandy", "Matale", "Nuwara Eliya"],
+  "Southern": ["Galle", "Matara", "Hambantota"],
+  "Northern": ["Jaffna", "Kilinochchi", "Mannar", "Vavuniya", "Mullaitivu"],
+  "Eastern": ["Trincomalee", "Batticaloa", "Ampara"],
+  "North Western": ["Kurunegala", "Puttalam"],
+  "North Central": ["Anuradhapura", "Polonnaruwa"],
+  "Uva": ["Badulla", "Monaragala"],
+  "Sabaragamuwa": ["Ratnapura", "Kegalle"]
+};
+
 export default function Home() {
+  // UI State
   const [searchMode, setSearchMode] = useState<"map" | "region">("map");
+  
+  // Form State
+  const [centerLocation, setCenterLocation] = useState("");
+  const [radius, setRadius] = useState(5);
+  const [province, setProvince] = useState("");
+  const [district, setDistrict] = useState("");
+  const [city, setCity] = useState("");
+  const [businessType, setBusinessType] = useState("Restaurants & Cafes");
+
+  // Reset Function
+  const handleReset = () => {
+    setCenterLocation("");
+    setRadius(5);
+    setProvince("");
+    setDistrict("");
+    setCity("");
+    setBusinessType("Restaurants & Cafes");
+  };
 
   return (
     <div className="flex flex-col h-screen bg-slate-50 font-sans">
@@ -70,7 +103,9 @@ export default function Home() {
                   <div className="relative">
                     <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
                     <input 
-                      type="text" 
+                      type="text"
+                      value={centerLocation}
+                      onChange={(e) => setCenterLocation(e.target.value)}
                       placeholder="Type a city to center map..." 
                       className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                     />
@@ -79,13 +114,14 @@ export default function Home() {
                 <div className="flex-1 min-w-[200px]">
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex justify-between">
                     <span>Search Radius</span>
-                    <span className="text-blue-600">5 km</span>
+                    <span className="text-blue-600">{radius} km</span>
                   </label>
                   <input 
                     type="range" 
                     min="1" 
-                    max="50" 
-                    defaultValue="5" 
+                    max="50"
+                    value={radius}
+                    onChange={(e) => setRadius(Number(e.target.value))}
                     className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 my-3" 
                   />
                 </div>
@@ -97,37 +133,58 @@ export default function Home() {
               <>
                 <div className="flex-1 min-w-[150px]">
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Province</label>
-                  <select className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                  <select 
+                    value={province}
+                    onChange={(e) => {
+                      setProvince(e.target.value);
+                      setDistrict(""); // Reset district when province changes
+                    }}
+                    className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  >
                     <option value="">Select Province...</option>
-                    <option>Western Province</option>
-                    <option>Sabaragamuwa</option>
-                    <option>Central Province</option>
+                    {Object.keys(locationData).map((prov) => (
+                      <option key={prov} value={prov}>{prov}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="flex-1 min-w-[150px]">
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">District</label>
-                  <select className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                  <select 
+                    value={district}
+                    onChange={(e) => setDistrict(e.target.value)}
+                    disabled={!province} // Disable if no province selected
+                    className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+                  >
                     <option value="">Select District...</option>
-                    <option>Colombo</option>
-                    <option>Ratnapura</option>
-                    <option>Kandy</option>
+                    {province && locationData[province].map((dist) => (
+                      <option key={dist} value={dist}>{dist}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="flex-1 min-w-[150px]">
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">City</label>
-                  <select className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                    <option value="">Select City...</option>
-                    <option>Balangoda</option>
-                    <option>Colombo 03</option>
-                  </select>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
+                    <input 
+                      type="text"
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      placeholder="e.g. Balangoda" 
+                      className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                  </div>
                 </div>
               </>
             )}
 
-            {/* ALWAYS RENDERED: Business Category & Submit */}
+            {/* ALWAYS RENDERED: Business Category & Action Buttons */}
             <div className="flex-1 min-w-[200px]">
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Business Type</label>
-              <select className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+              <select 
+                value={businessType}
+                onChange={(e) => setBusinessType(e.target.value)}
+                className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              >
                 <option>Restaurants & Cafes</option>
                 <option>IT & Software Companies</option>
                 <option>Retail & Grocery</option>
@@ -135,10 +192,20 @@ export default function Home() {
               </select>
             </div>
 
-            <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg text-sm transition-colors shadow-sm flex items-center gap-2">
-              <Search className="w-4 h-4" />
-              Generate Leads
-            </button>
+            {/* Action Buttons */}
+            <div className="flex gap-2">
+              <button 
+                onClick={handleReset}
+                title="Reset Filters"
+                className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold py-2 px-3 rounded-lg text-sm transition-colors shadow-sm border border-slate-200 flex items-center justify-center"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+              <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-6 rounded-lg text-sm transition-colors shadow-sm flex items-center gap-2">
+                <Search className="w-4 h-4" />
+                Generate Leads
+              </button>
+            </div>
           </div>
         </div>
 
