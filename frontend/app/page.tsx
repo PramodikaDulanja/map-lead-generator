@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { 
   MapPin, 
   Search, 
@@ -13,6 +14,12 @@ import {
   Navigation,
   Loader2
 } from "lucide-react";
+
+// Dynamically import the map to avoid SSR errors
+const MapComponent = dynamic(() => import("../components/MapComponent"), {
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-full text-slate-500 font-medium">Loading interactive map...</div>
+});
 
 // Sri Lanka Province & District Data
 const locationData: Record<string, string[]> = {
@@ -37,12 +44,18 @@ type Lead = {
 };
 
 export default function Home() {
-  // UI State
+  // === ALL STATE MUST BE INSIDE THIS FUNCTION ===
+  
+  // UI & Loading State
   const [searchMode, setSearchMode] = useState<"map" | "region">("map");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSearchingCity, setIsSearchingCity] = useState(false);
   const [leads, setLeads] = useState<Lead[]>([]);
   
-  // Form State
+  // Map & Form State
+  // const [mapCenter, setMapCenter] = useState<[number, number]>([7.8731, 80.7718]);
+  // Change from [7.8731, 80.7718] to Colombo coordinates:
+  const [mapCenter, setMapCenter] = useState<[number, number]>([6.9271, 79.8612]);
   const [centerLocation, setCenterLocation] = useState("");
   const [radius, setRadius] = useState(5);
   const [province, setProvince] = useState("");
@@ -58,26 +71,105 @@ export default function Home() {
     setDistrict("");
     setCity("");
     setBusinessType("Restaurants & Cafes");
+    setMapCenter([7.8731, 80.7718]);
     setLeads([]); // Clear the table
   };
 
-  // Mock API Call for "Generate Leads" Button
-  const handleGenerate = () => {
-    setIsGenerating(true);
-    
-    // Simulate backend delay of 1 second
-    setTimeout(() => {
-      setLeads([
-        { id: 1, name: "TechNova Solutions", address: "45 Galle Road, Colombo 03", contact: "+94 11 234 5678", rating: 4.8 },
-        { id: 2, name: "Ceylon Digital Media", address: "12 Duplication Rd, Colombo 04", contact: "+94 77 123 9876", rating: 4.5 },
-        { id: 3, name: "Lanka Systems Pro", address: "88 Nawala Road, Rajagiriya", contact: "+94 11 987 6543", rating: 4.2 },
-      ]);
-      setIsGenerating(false);
-    }, 1000);
+
+// Search City Location (Nominatim API)
+  const searchCityLocation = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && centerLocation.trim() !== "") {
+      setIsSearchingCity(true);
+      try {
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(centerLocation + ", Sri Lanka")}&limit=1`,
+          {
+            headers: {
+              "Accept": "application/json",
+              "Accept-Language": "en-US,en;q=0.9"
+            }
+          }
+        );
+        
+        if (!response.ok) throw new Error("Network blocked");
+        
+        const data = await response.json();
+        
+        if (data && data.length > 0) {
+          setMapCenter([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
+        } else {
+          alert("Location not found. Try a different spelling.");
+        }
+      } catch (error) {
+        console.error("Geocoding error:", error);
+        alert("Failed to reach the map search server. Please try again in a moment.");
+      } finally {
+        setIsSearchingCity(false);
+      }
+    }
   };
 
-  return (
-    <div className="flex flex-col h-screen bg-slate-50 font-sans">
+
+// Real API Call for "Generate Leads" Button
+const handleGenerate = async () => {
+  // Validate Region Search
+  if (searchMode === "region" && !city.trim()) {
+    alert("Please enter a city name.");
+    return;
+  }
+
+  setIsGenerating(true);
+  
+  try {
+    let endpoint = "";
+    let payload: any = { business_type: businessType };
+
+    // Determine which endpoint and payload to use based on the active tab
+    if (searchMode === "map") {
+      endpoint = "http://127.0.0.1:8000/api/leads/radius";
+      payload.lat = mapCenter[0];
+      payload.lon = mapCenter[1];
+      payload.radius_km = radius;
+    } else {
+      endpoint = "http://127.0.0.1:8000/api/leads/region";
+      payload.city = city.trim();
+      if (province) payload.province = province;
+      if (district) payload.district = district;
+    }
+
+    // Call the FastAPI Backend
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || "Failed to fetch leads");
+    }
+
+    const data = await response.json();
+    
+    // Update the table with the real data
+    setLeads(data.leads || []);
+    
+    if (data.leads.length === 0) {
+      alert("No businesses found in this area. Try expanding the radius or changing the business type.");
+    }
+    
+  } catch (error: any) {
+    console.error("API Error:", error);
+    alert(`Error generating leads: ${error.message}. Make sure your Python backend is running.`);
+    setLeads([]);
+  } finally {
+    setIsGenerating(false);
+  }
+};
+
+return (
+    // 1. CHANGED: h-screen is now min-h-screen
+    <div className="flex flex-col min-h-screen bg-slate-50 font-sans">
       
       {/* Top Navigation Bar */}
       <nav className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shadow-md z-10 shrink-0">
@@ -91,7 +183,8 @@ export default function Home() {
       </nav>
 
       {/* Main Workspace */}
-      <div className="flex-1 flex flex-col p-6 gap-6 overflow-hidden max-w-7xl mx-auto w-full">
+      {/* 2. CHANGED: replaced overflow-hidden with overflow-auto pb-10 */}
+      <div className="flex-1 flex flex-col p-6 gap-6 overflow-auto max-w-7xl mx-auto w-full pb-10">
         
         {/* TOP: Search Controls Card */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-1 shrink-0">
@@ -136,7 +229,8 @@ export default function Home() {
                       type="text"
                       value={centerLocation}
                       onChange={(e) => setCenterLocation(e.target.value)}
-                      placeholder="Type a city to center map..." 
+                      onKeyDown={searchCityLocation}
+                      placeholder={isSearchingCity ? "Locating..." : "Type a city and press Enter..."}
                       className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
                     />
                   </div>
@@ -215,10 +309,20 @@ export default function Home() {
                 onChange={(e) => setBusinessType(e.target.value)}
                 className="w-full bg-white border border-slate-300 text-slate-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
               >
-                <option>Restaurants & Cafes</option>
-                <option>IT & Software Companies</option>
-                <option>Retail & Grocery</option>
-                <option>Healthcare & Clinics</option>
+                <optgroup label="Specific Categories">
+                  <option value="Restaurant">Restaurant</option>
+                  <option value="Cafe">Cafe</option>
+                  <option value="Retail Stores">Retail Stores (Clothes, Electronics, etc.)</option>
+                  <option value="Grocery & Food">Grocery & Food (Markets, Bakeries, etc.)</option>
+                  <option value="Hotel">Hotel</option>
+                  <option value="Bank">Bank</option>
+                  <option value="Supermarket">Supermarket</option>
+                  <option value="Pharmacy">Pharmacy</option>
+                  <option value="Hospital">Hospital</option>
+                  <option value="Healthcare & Clinics">Healthcare & Clinics</option>
+                  <option value="School">School</option>
+                  <option value="IT & Software Companies">IT & Software Companies</option>
+                  </optgroup>
               </select>
             </div>
 
@@ -245,10 +349,12 @@ export default function Home() {
 
         {/* MIDDLE: Conditional Map Section */}
         {searchMode === "map" && (
-          <div className="w-full h-[350px] shrink-0 bg-slate-200 rounded-xl border border-slate-300 relative overflow-hidden flex items-center justify-center flex-col shadow-inner">
-             <MapPin className="text-slate-400 w-12 h-12 mb-2" />
-             <p className="text-slate-500 font-medium">Interactive Map rendering area</p>
-             <p className="text-slate-400 text-sm mt-1">Leaflet.js will mount here in center</p>
+          <div className="w-full h-[350px] shrink-0 bg-slate-200 rounded-xl border border-slate-300 relative overflow-hidden flex items-center justify-center flex-col shadow-inner z-0">
+            <MapComponent 
+                radius={radius} 
+                center={mapCenter} 
+                setCenter={setMapCenter} 
+            />
           </div>
         )}
 
