@@ -12,8 +12,12 @@ import {
   RotateCcw,
   Star,
   Navigation,
-  Loader2
+  Loader2,
+  FileText
 } from "lucide-react";
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // Dynamically import the map to avoid SSR errors
 const MapComponent = dynamic(() => import("../components/MapComponent"), {
@@ -41,6 +45,9 @@ type Lead = {
   address: string;
   contact: string;
   rating: number;
+  lat?: number;             
+  lon?: number;             
+  google_maps_url?: string; 
 };
 
 export default function Home() {
@@ -166,6 +173,70 @@ const handleGenerate = async () => {
     setIsGenerating(false);
   }
 };
+
+
+// --- Export to Excel ---
+const exportToExcel = () => {
+  if (leads.length === 0) {
+    alert("No leads to export. Please generate leads first.");
+    return;
+  }
+  
+  // Clean up the data for the spreadsheet
+  const exportData = leads.map(lead => ({
+    "Business Name": lead.name,
+    "Address": lead.address,
+    "Contact No": lead.contact,
+    "Rating": lead.rating,
+    "Google Maps Link": lead.google_maps_url || "N/A"
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(exportData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Leads");
+  
+  XLSX.writeFile(workbook, "LeadGeo_Pro_Leads.xlsx");
+};
+
+// --- Export to PDF ---
+const exportToPDF = () => {
+  if (leads.length === 0) {
+    alert("No leads to export. Please generate leads first.");
+    return;
+  }
+
+  const doc = new jsPDF();
+  
+  // Add a Title
+  doc.setFontSize(16);
+  doc.text(`LeadGeo Pro - ${businessType} Leads`, 14, 15);
+  doc.setFontSize(10);
+  doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 22);
+
+  // Define table headers and rows
+  const tableColumn = ["Business Name", "Address", "Contact No", "Rating"];
+  const tableRows = leads.map(lead => [
+    lead.name,
+    lead.address,
+    lead.contact,
+    lead.rating.toString()
+  ]);
+
+  // Draw the table
+  autoTable(doc, {
+    head: [tableColumn],
+    body: tableRows,
+    startY: 28,
+    styles: { fontSize: 8, cellPadding: 3 },
+    headStyles: { fillColor: [15, 23, 42] }, // Slate-900 color for headers
+    alternateRowStyles: { fillColor: [248, 250, 252] } // Slate-50 alternating rows
+  });
+  
+  doc.save("LeadGeo_Pro_Leads.pdf");
+};
+
+
+
 
 return (
     // 1. CHANGED: h-screen is now min-h-screen
@@ -354,9 +425,11 @@ return (
                 radius={radius} 
                 center={mapCenter} 
                 setCenter={setMapCenter} 
+                leads={leads}
             />
           </div>
         )}
+        
 
         {/* BOTTOM: Results Table Section (Always Visible) */}
         <div className="w-full flex-1 bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col overflow-hidden min-h-[300px]">
@@ -371,17 +444,18 @@ return (
             </h2>
             <div className="flex gap-2">
               <button 
-                disabled={leads.length === 0}
-                className="flex items-center gap-1.5 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white px-3 py-1.5 rounded-md transition-colors"
-              >
-                <Download className="w-3.5 h-3.5" /> Excel
-              </button>
-              <button 
-                disabled={leads.length === 0}
-                className="flex items-center gap-1.5 text-xs font-medium bg-rose-600 hover:bg-rose-700 disabled:bg-rose-300 text-white px-3 py-1.5 rounded-md transition-colors"
-              >
-                <Download className="w-3.5 h-3.5" /> PDF
-              </button>
+              onClick={exportToPDF}
+              className="inline-flex items-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-slate-50 transition-colors shadow-sm"
+            >
+              <FileText className="w-4 h-4 text-rose-500" /> Export PDF
+            </button>
+
+            <button 
+              onClick={exportToExcel}
+              className="inline-flex items-center gap-2 bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-slate-50 transition-colors shadow-sm"
+            >
+              <Download className="w-4 h-4 text-emerald-500" /> Export Excel
+            </button>
             </div>
           </div>
           
@@ -399,6 +473,8 @@ return (
               </thead>
               <tbody className="divide-y divide-slate-100">
                 
+
+
                 {leads.length > 0 ? (
                   leads.map((lead) => (
                     <tr key={lead.id} className="hover:bg-slate-50 transition-colors">
@@ -419,10 +495,22 @@ return (
                           {lead.rating} <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
                         </span>
                       </td>
+
                       <td className="p-4 text-center">
-                        <button className="inline-flex items-center justify-center gap-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors">
-                          <Navigation className="w-3.5 h-3.5" /> Show Map
-                        </button>
+                        {lead.google_maps_url ? (
+                          <a 
+                            href={lead.google_maps_url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center gap-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-md transition-colors"
+                          >
+                            <Navigation className="w-3.5 h-3.5" /> Google Maps
+                          </a>
+                        ) : (
+                          <button disabled className="inline-flex items-center justify-center gap-1 text-xs font-medium text-slate-400 bg-slate-50 px-3 py-1.5 rounded-md cursor-not-allowed">
+                            <Navigation className="w-3.5 h-3.5" /> No Map
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))

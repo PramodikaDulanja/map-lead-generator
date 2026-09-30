@@ -74,6 +74,7 @@ class LeadItem(BaseModel):
     rating: float
     lat: Optional[float] = None
     lon: Optional[float] = None
+    google_maps_url: str
 
 
 class LeadResponse(BaseModel):
@@ -81,8 +82,9 @@ class LeadResponse(BaseModel):
     count: int
     leads: List[LeadItem]
 
-
 # --- Helper: Query OpenStreetMap Overpass ---
+
+
 async def fetch_leads_from_osm(lat: float, lon: float, radius_km: float, business_type: str) -> list[LeadItem]:
     radius_meters = int(radius_km * 1000)
     tag_selector = OSM_TAG_MAPPING.get(business_type, '"amenity"~"restaurant"')
@@ -127,12 +129,30 @@ async def fetch_leads_from_osm(lat: float, lon: float, radius_km: float, busines
         if not name:
             continue
 
-        street = tags.get("addr:street", "")
-        city = tags.get("addr:city", "")
-        address = f"{street}, {city}".strip(", ") if (
-            street or city) else "Address not specified"
+        # Smarter Address Extraction
+        street = tags.get("addr:street") or tags.get(
+            "addr:place") or tags.get("addr:full") or ""
+        city = tags.get("addr:city") or tags.get("addr:suburb") or ""
+
+        # Combine whatever address pieces we found
+        if street and city:
+            address = f"{street}, {city}".strip(", ")
+        elif street:
+            address = street
+        elif city:
+            address = city
+        else:
+            address = "Address missing in map data"
+
         contact = tags.get("phone") or tags.get("contact:phone") or tags.get(
             "contact:mobile") or "No contact info"
+
+        # 1. Safely extract coordinates
+        lead_lat = element.get("lat") or element.get("center", {}).get("lat")
+        lead_lon = element.get("lon") or element.get("center", {}).get("lon")
+
+        # 2. Generate the Google Maps Link
+        gmaps_url = f"https://www.google.com/maps/search/?api=1&query={lead_lat},{lead_lon}"
 
         leads.append(
             LeadItem(
@@ -141,8 +161,9 @@ async def fetch_leads_from_osm(lat: float, lon: float, radius_km: float, busines
                 address=address,
                 contact=contact,
                 rating=round(random.uniform(4.0, 5.0), 1),
-                lat=element.get("lat") or element.get("center", {}).get("lat"),
-                lon=element.get("lon") or element.get("center", {}).get("lon"),
+                lat=lead_lat,
+                lon=lead_lon,
+                google_maps_url=gmaps_url  # 3. Append to the LeadItem
             )
         )
         if len(leads) >= 100:
