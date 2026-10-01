@@ -5,6 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import httpx
 
+import os
+from dotenv import load_dotenv
+from serpapi import GoogleSearch
+
+# Load environment variables from the .env file
+load_dotenv()
+SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+
 app = FastAPI(title="LeadGeo Pro API")
 
 # Allow Next.js frontend (port 3000) to communicate with FastAPI
@@ -202,3 +210,62 @@ async def get_leads_by_region(payload: RegionSearchRequest):
 
     leads = await fetch_leads_from_osm(lat, lon, 6.0, payload.business_type)
     return LeadResponse(success=True, count=len(leads), leads=leads)
+
+
+@app.get("/api/geocode")
+async def proxy_geocode(q: str):
+    """Proxy to Nominatim to bypass frontend browser CORS/Ad-blocker issues"""
+    async with httpx.AsyncClient(headers=HEADERS, timeout=10.0) as client:
+        try:
+            res = await client.get(NOMINATIM_URL, params={"q": q, "format": "json", "limit": 1})
+            data = res.json()
+            if not data:
+                raise HTTPException(
+                    status_code=404, detail="Location not found")
+            return {"lat": float(data[0]["lat"]), "lon": float(data[0]["lon"])}
+        except Exception as e:
+            raise HTTPException(
+                status_code=502, detail=f"Geocoding failed: {str(e)}")
+
+
+@app.get("/api/enrich")
+async def enrich_lead(name: str, location: str):
+    """Uses SerpApi to find the official website and LinkedIn profile for a business."""
+    if not SERPAPI_KEY:
+        raise HTTPException(
+            status_code=500, detail="SERPAPI_KEY not found in .env file.")
+
+    try:
+        search_query = f"{name} {location} Sri Lanka"
+
+        params = {
+            "engine": "google",
+            "q": search_query,
+            "api_key": SERPAPI_KEY,
+            "num": 5
+        }
+
+        search = GoogleSearch(params)
+        results = search.get_dict()
+
+        organic_results = results.get("organic_results", [])
+
+        enriched_data = {
+            "website": None,
+            "linkedin": None
+        }
+
+        for result in organic_results:
+            link = result.get("link", "")
+
+            if "linkedin.com/company" in link and not enriched_data["linkedin"]:
+                enriched_data["linkedin"] = link
+
+            elif not enriched_data["website"] and not any(x in link for x in ["facebook.com", "instagram.com", "linkedin.com", "twitter.com", "yelp.com", "tripadvisor"]):
+                enriched_data["website"] = link
+
+        return enriched_data
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=502, detail=f"Enrichment failed: {str(e)}")
