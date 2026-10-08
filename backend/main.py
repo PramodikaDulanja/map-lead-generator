@@ -9,6 +9,9 @@ import os
 from dotenv import load_dotenv
 from serpapi import GoogleSearch
 
+import re
+from urllib.parse import urlparse
+
 # Load environment variables from the .env file
 load_dotenv()
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
@@ -27,9 +30,12 @@ app.add_middleware(
 
 # OpenStreetMap & Nominatim configuration
 OVERPASS_URLS = [
-    "https://lz4.overpass-api.de/api/interpreter",   # Primary (Fastest)
-    "https://overpass.kumi.systems/api/interpreter",  # Fallback 1
-    "https://overpass-api.de/api/interpreter"        # Fallback 2
+    "https://lz4.overpass-api.de/api/interpreter",             # Main Fast Server
+    # NEW: Replaced kumi.systems
+    "https://overpass.private.coffee/api/interpreter",
+    # NEW: High-capacity VK mirror
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass-api.de/api/interpreter"
 ]
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 HEADERS = {
@@ -90,6 +96,66 @@ class LeadResponse(BaseModel):
     count: int
     leads: List[LeadItem]
 
+
+# Aggregator, social, and directory domains to exclude from official website selection
+DISALLOWED_DOMAINS = {
+    # Social & Media
+    "facebook.com", "instagram.com", "linkedin.com", "twitter.com", "x.com",
+    "youtube.com", "tiktok.com", "pinterest.com", "reddit.com",
+    # Directories & Classifieds (Global & Sri Lanka)
+    "ikman.lk", "yellowpages.lk", "rainbowpages.lk", "srilanka-places.com",
+    "nicelocal.lk", "findglocal.com", "cybo.com", "yelp.com", "tripadvisor.com",
+    "foursquare.com", "zoominfo.com", "dnb.com", "crunchbase.com",
+    # Travel, Booking & Delivery
+    "booking.com", "agoda.com", "hotels.com", "trip.com", "pickme.lk", "uber.com", "ubereats.com",
+    # General reference / Government
+    "wikipedia.org", "gov.lk"
+}
+
+
+def is_disallowed(url: str) -> bool:
+    try:
+        domain = urlparse(url).netloc.lower()
+        # Strip subdomains (e.g. m.facebook.com -> facebook.com)
+        return any(disallowed in domain for disallowed in DISALLOWED_DOMAINS)
+    except Exception:
+        return True
+
+
+def score_lead_website(url: str, title: str, business_name: str) -> int:
+    """Calculates a relevance score for a prospective website URL."""
+    score = 0
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    path = parsed.path.strip("/")
+
+    # Tokenize business name (ignore common suffixes like 'pvt', 'ltd', 'company')
+    clean_name = re.sub(r'[^a-zA-Z0-9\s]', '', business_name.lower())
+    stop_words = {"pvt", "ltd", "holdings", "company", "enterprises",
+                  "services", "restaurant", "cafe", "hotel", "the"}
+    tokens = [t for t in clean_name.split() if len(
+        t) > 2 and t not in stop_words]
+
+    # 1. Heavily reward domain if it contains key tokens of the company name
+    for token in tokens:
+        if token in domain:
+            score += 40
+
+    # 2. Reward if the Google page title contains key tokens
+    title_lower = title.lower()
+    for token in tokens:
+        if token in title_lower:
+            score += 15
+
+    # 3. Prefer homepages over deep links / articles (e.g., example.com vs example.com/news/2024/...)
+    if not path or path == "":
+        score += 20
+    elif len(path.split("/")) > 2:
+        score -= 15  # Penalty for very deep article links
+
+    return score
+
+
 # --- Helper: Query OpenStreetMap Overpass ---
 
 
@@ -98,7 +164,7 @@ async def fetch_leads_from_osm(lat: float, lon: float, radius_km: float, busines
     tag_selector = OSM_TAG_MAPPING.get(business_type, '"amenity"~"restaurant"')
 
     query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:90];
     (
       node[{tag_selector}](around:{radius_meters},{lat},{lon});
       way[{tag_selector}](around:{radius_meters},{lat},{lon});
@@ -110,7 +176,7 @@ async def fetch_leads_from_osm(lat: float, lon: float, radius_km: float, busines
     last_error = None
 
     # Try each mirror one by one until one works
-    async with httpx.AsyncClient(headers=HEADERS, timeout=30.0) as client:
+    async with httpx.AsyncClient(headers=HEADERS, timeout=100.0) as client:
         for url in OVERPASS_URLS:
             try:
                 print(f"Trying Overpass mirror: {url}")
@@ -230,39 +296,67 @@ async def proxy_geocode(q: str):
 
 @app.get("/api/enrich")
 async def enrich_lead(name: str, location: str):
-    """Uses SerpApi to find the official website and LinkedIn profile for a business."""
+    """Uses SerpApi with multi-layer filtering to find verified websites and LinkedIn profiles."""
     if not SERPAPI_KEY:
         raise HTTPException(
             status_code=500, detail="SERPAPI_KEY not found in .env file.")
 
     try:
-        search_query = f"{name} {location} Sri Lanka"
+        # Search query tailored for official presence
+        search_query = f"{name} {location} official website Sri Lanka"
 
         params = {
             "engine": "google",
             "q": search_query,
             "api_key": SERPAPI_KEY,
-            "num": 5
+            "num": 8
         }
 
         search = GoogleSearch(params)
         results = search.get_dict()
-
-        organic_results = results.get("organic_results", [])
 
         enriched_data = {
             "website": None,
             "linkedin": None
         }
 
+        # -----------------------------------------------------------
+        # LAYER 1: Check Google's Official Knowledge Graph / Local Result
+        # (This is Google's verified business profile website button)
+        # -----------------------------------------------------------
+        kg = results.get("knowledge_graph", {})
+        if kg.get("website") and not is_disallowed(kg.get("website")):
+            enriched_data["website"] = kg.get("website")
+
+        # -----------------------------------------------------------
+        # LAYER 2: Scan Organic Results with Relevance Scoring
+        # -----------------------------------------------------------
+        organic_results = results.get("organic_results", [])
+        candidate_websites = []
+
         for result in organic_results:
             link = result.get("link", "")
+            title = result.get("title", "")
 
+            # Capture LinkedIn company profile
             if "linkedin.com/company" in link and not enriched_data["linkedin"]:
                 enriched_data["linkedin"] = link
 
-            elif not enriched_data["website"] and not any(x in link for x in ["facebook.com", "instagram.com", "linkedin.com", "twitter.com", "yelp.com", "tripadvisor"]):
-                enriched_data["website"] = link
+            # Filter out blacklisted directories & aggregator platforms
+            if is_disallowed(link):
+                continue
+
+            # Calculate match quality
+            score = score_lead_website(link, title, name)
+            candidate_websites.append((score, link))
+
+        # If knowledge graph didn't find one, pick the highest-scoring candidate
+        if not enriched_data["website"] and candidate_websites:
+            candidate_websites.sort(key=lambda x: x[0], reverse=True)
+            best_score, best_url = candidate_websites[0]
+            # Require a minimum baseline score so completely unrelated links are discarded
+            if best_score > 0:
+                enriched_data["website"] = best_url
 
         return enriched_data
 

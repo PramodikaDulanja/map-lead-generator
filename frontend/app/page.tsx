@@ -3,20 +3,9 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { 
-  MapPin, 
-  Search, 
-  Download, 
-  Building2, 
-  Map as MapIcon, 
-  ListFilter,
-  RotateCcw,
-  Star,
-  Navigation,
-  Loader2,
-  FileText,
-  Globe, 
-  Briefcase,
-  MessageCircle,
+  MapPin, Search, Download, Building2,  Map as MapIcon,   ListFilter,  RotateCcw,
+  Star,  Navigation,  Loader2,  X,  FileText,  Globe,   Briefcase,  MessageCircle,
+  Phone,  ExternalLink,
 } from "lucide-react";
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -116,7 +105,7 @@ export default function Home() {
   const [district, setDistrict] = useState("Ratnapura");
   const [city, setCity] = useState("Balangoda");
 
-  
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
 
 
   const handleProvinceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -156,7 +145,7 @@ const searchCityLocation = async (e: React.KeyboardEvent<HTMLInputElement>) => {
   if (e.key === "Enter" && centerLocation.trim() !== "") {
     setIsSearchingCity(true);
     try {
-      // Call our own FastAPI backend instead of the public API directly
+      // FIXED: Changed port 8000 
       const response = await fetch(
         `http://127.0.0.1:8000/api/geocode?q=${encodeURIComponent(centerLocation + ", Sri Lanka")}`
       );
@@ -187,11 +176,11 @@ const searchCityLocation = async (e: React.KeyboardEvent<HTMLInputElement>) => {
   const handleGenerate = async () => {
     // Validate Region Search
     if (searchMode === "region" && !city.trim()) {
-      toast.error("Please select a city."); // Upgraded from alert()
+      toast.error("Please select a city."); 
       return;
     }
 
-    setIsGenerating(true); // Turns ON the Skeleton Loader
+    setIsGenerating(true); 
     
     try {
       let endpoint = "";
@@ -199,20 +188,22 @@ const searchCityLocation = async (e: React.KeyboardEvent<HTMLInputElement>) => {
 
       // Determine which endpoint and payload to use based on the active tab
       if (searchMode === "map") {
+        // FIXED: Changed port 8000 
         endpoint = "http://127.0.0.1:8000/api/leads/radius";
         payload.lat = mapCenter[0];
         payload.lon = mapCenter[1];
         payload.radius_km = radius;
       } else {
+        // FIXED: Changed port 8000 
         endpoint = "http://127.0.0.1:8000/api/leads/region";
         payload.city = city.trim();
         if (province) payload.province = province;
         if (district) payload.district = district;
       }
 
-      // Make the API call to your FastAPI backend
+      // Added method, headers, and body for the POST request
       const response = await fetch(endpoint, {
-        method: "POST",
+        method: "POST", 
         headers: {
           "Content-Type": "application/json",
         },
@@ -227,7 +218,6 @@ const searchCityLocation = async (e: React.KeyboardEvent<HTMLInputElement>) => {
       const data = await response.json();
       setLeads(data.leads || []);
 
-      // Trigger beautiful Toast notifications instead of alerts
       if (data.leads && data.leads.length > 0) {
         toast.success(`Successfully found ${data.leads.length} leads!`);
       } else {
@@ -238,10 +228,13 @@ const searchCityLocation = async (e: React.KeyboardEvent<HTMLInputElement>) => {
       console.error(error);
       toast.error(error.message || "Failed to generate leads. Is the backend running?");
     } finally {
-      setIsGenerating(false); // Turns OFF the Skeleton Loader
+      setIsGenerating(false); 
     }
   };
 
+
+
+  
 // --- AI Lead Enrichment ---
   const handleEnrichLead = async (leadId: number, name: string, address: string) => {
     // Set this specific lead to "loading"
@@ -253,15 +246,16 @@ const searchCityLocation = async (e: React.KeyboardEvent<HTMLInputElement>) => {
       const locationParts = address.split(",");
       let searchLocation = locationParts[locationParts.length - 1].trim();
 
-      // FIXED: If the address is missing, just use the city they searched for!
+      // If the address is missing, just use the city they searched for!
       if (searchLocation.includes("Address missing")) {
         searchLocation = city; 
       }
 
+      // FIXED: Changed port 8000 
       const response = await fetch(`http://127.0.0.1:8000/api/enrich?name=${encodeURIComponent(name)}&location=${encodeURIComponent(searchLocation)}`);
       
       if (!response.ok) {
-        // FIXED: Extract the actual Python error message so we can see it in the Toast
+        // Extract the actual Python error message so we can see it in the Toast
         const errorData = await response.json();
         throw new Error(errorData.detail || "Enrichment failed");
       }
@@ -282,7 +276,7 @@ const searchCityLocation = async (e: React.KeyboardEvent<HTMLInputElement>) => {
 
     } catch (error: any) {
       console.error(error);
-      // FIXED: Display the exact error message in the red popup
+      // Display the exact error message in the red popup
       toast.error(error.message || `Failed to enrich ${name}`);
       
       setLeads(currentLeads => 
@@ -681,7 +675,14 @@ return (
                         <div className="w-8 h-8 rounded bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
                           <Building2 className="w-4 h-4" />
                         </div>
-                        {lead.name}
+                        <button 
+                          onClick={() => setSelectedLead(lead)}
+                          className="text-left font-medium text-slate-900 hover:text-blue-600 hover:underline transition-colors truncate max-w-[200px]"
+                          title="Click to view full details"
+                        >
+                          {lead.name}
+                        </button>
+                        
                       </td>
                       <td className="p-4 text-slate-600 truncate max-w-[200px]" title={lead.address}>
                         {lead.address}
@@ -792,7 +793,125 @@ return (
           </div>
         </div>
 
+{/* Lead Details Modal */}
+      {selectedLead && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="p-6 bg-slate-900 text-white flex justify-between items-start">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0 border border-blue-400/30">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold leading-tight">{selectedLead.name}</h3>
+                  <div className="flex items-center gap-1.5 mt-1 text-xs text-amber-400 font-medium">
+                    <Star className="w-3.5 h-3.5 fill-amber-400" />
+                    <span>{selectedLead.rating} Rating</span>
+                  </div>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedLead(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5">
+              {/* Address */}
+              <div className="flex items-start gap-3">
+                <MapPin className="w-4 h-4 text-slate-400 mt-1 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Address</p>
+                  <p className="text-sm text-slate-700 mt-0.5">{selectedLead.address}</p>
+                </div>
+              </div>
+
+              {/* Contact */}
+              <div className="flex items-start gap-3">
+                <Phone className="w-4 h-4 text-slate-400 mt-1 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Contact Number</p>
+                  <p className="text-sm font-medium text-slate-800 mt-0.5">{selectedLead.contact}</p>
+                </div>
+              </div>
+
+              {/* Website */}
+              <div className="flex items-start gap-3">
+                <Globe className="w-4 h-4 text-slate-400 mt-1 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Official Website</p>
+                  {selectedLead.website ? (
+                    <a 
+                      href={selectedLead.website} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="text-sm text-blue-600 hover:underline flex items-center gap-1 mt-0.5 break-all"
+                    >
+                      {selectedLead.website}
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  ) : (
+                    <p className="text-sm text-slate-400 italic mt-0.5">Not enriched or not found</p>
+                  )}
+                </div>
+              </div>
+
+              {/* LinkedIn */}
+              <div className="flex items-start gap-3">
+                <Briefcase className="w-4 h-4 text-slate-400 mt-1 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">LinkedIn Profile</p>
+                  {selectedLead.linkedin ? (
+                    <a 
+                      href={selectedLead.linkedin} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="text-sm text-indigo-600 hover:underline flex items-center gap-1 mt-0.5 break-all"
+                    >
+                      {selectedLead.linkedin}
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  ) : (
+                    <p className="text-sm text-slate-400 italic mt-0.5">Not enriched or not found</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+              <div>
+                {selectedLead.google_maps_url && (
+                  <a
+                    href={selectedLead.google_maps_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Navigation className="w-4 h-4" /> View Map
+                  </a>
+                )}
+              </div>
+              <button
+                onClick={() => setSelectedLead(null)}
+                className="px-5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-semibold rounded-lg transition-colors"
+              >
+                Close
+              </button>
+            </div>
+            
+          </div>
+        </div>
+      )}
+
       </div>
     </div>
+    
   );
 }
+
